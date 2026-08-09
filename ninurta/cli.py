@@ -273,9 +273,35 @@ class NinurtaCLI:
             _console.print(f"[bold red]Pipeline error:[/] {exc}")
 
     def tui(self) -> None:
-        """Launch the standalone Ninurta chat TUI (no agent connected)."""
-        from ninurta.tui import run as run_tui
-        run_tui()
+        """Launch the Ninurta chat TUI (Node/Ink)."""
+        import subprocess
+        from pathlib import Path
+
+        tui_dir = Path(__file__).resolve().parent / "tui-node"
+        index_path = tui_dir / "index.jsx"
+        tsx_bin = tui_dir / "node_modules" / ".bin" / "tsx"
+
+        if not index_path.exists():
+            _console.print("[bold red]TUI not found.[/] Run `npm install` in ninurta/tui-node/ first.")
+            return
+
+        if not tsx_bin.exists():
+            _console.print("[bold red]tsx not found.[/] Run `npm install` in ninurta/tui-node/ first.")
+            return
+
+        from ninurta.config import get_default_model_id
+        model_id = get_default_model_id()
+        cwd = os.getcwd()
+
+        try:
+            subprocess.run(
+                [str(tsx_bin), str(index_path), model_id, cwd],
+                check=False,
+            )
+        except KeyboardInterrupt:
+            pass
+        finally:
+            print()
 
     def models(self, provider: str = "gemini") -> None:
         """List available models for a given provider."""

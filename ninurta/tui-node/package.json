@@ -1,0 +1,16 @@
+{
+  "name": "ninurta-tui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ninurta terminal UI — Ink-based transparent inline chat interface",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.jsx",
+    "dev": "tsx --watch index.jsx"
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "react": "^19.2.0",
+    "tsx": "^4.23.11"
+  }
+}
