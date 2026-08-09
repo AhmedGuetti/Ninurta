@@ -1,16 +1,42 @@
 {
   "name": "ninurta-tui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Ninurta terminal UI — Ink-based transparent inline chat interface",
+  "description": "Ninurta terminal UI \u2014 Ink-based transparent interface, Hermes TUI architecture",
   "type": "module",
   "scripts": {
     "start": "tsx index.jsx",
     "dev": "tsx --watch index.jsx"
   },
   "dependencies": {
-    "ink": "^7.1.1",
-    "react": "^19.2.0",
-    "tsx": "^4.23.11"
+    "@hermes/ink": "file:./vendor/hermes-ink",
+    "@nanostores/react": "1.1.0",
+    "nanostores": "1.4.0",
+    "react": "19.2.7",
+    "tsx": "^4.23.11",
+    "@alcalzone/ansi-tokenize": "latest",
+    "auto-bind": "latest",
+    "bidi-js": "latest",
+    "chalk": "latest",
+    "cli-boxes": "latest",
+    "code-excerpt": "latest",
+    "emoji-regex": "latest",
+    "get-east-asian-width": "latest",
+    "indent-string": "latest",
+    "lodash-es": "latest",
+    "react-reconciler": "latest",
+    "semver": "latest",
+    "signal-exit": "latest",
+    "stack-utils": "latest",
+    "strip-ansi": "latest",
+    "supports-hyperlinks": "latest",
+    "type-fest": "latest",
+    "usehooks-ts": "latest",
+    "wrap-ansi": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "typescript": "^5.9.2"
   }
 }

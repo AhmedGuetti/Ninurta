@@ -1,48 +1,83 @@
-// Bottom input prompt with ❯ prefix.
-// Manages its own text buffer via useInput hook.
+// Bottom input prompt — hermes-ink native (no ink-text-input; that package
+// binds to plain `ink`'s input system, which never fires under @hermes/ink).
+// Chars, backspace, Enter submit, ArrowUp/Down history — all via useInput.
 
-import React, { useState } from "react";
-import { Box, Text } from "ink";
-import { useInput } from "ink";
-import { ACCENT, TEXT } from "../lib/palette.js";
+import React, { useState } from 'react'
+import { Box, Text, useInput } from '@hermes/ink'
+import { ACCENT } from '../lib/palette.js'
 
-export default function InputPrompt({ onSubmit }) {
-  const [value, setValue] = useState("");
+const HISTORY_MAX = 50
+
+export default function InputPrompt({ onSubmit, width }) {
+  const [value, setValue] = useState('')
+  const [history, setHistory] = useState([])
+  const [histIdx, setHistIdx] = useState(-1)
+
+  const submit = (text) => {
+    const trimmed = text.trim()
+    if (trimmed) {
+      onSubmit(trimmed)
+      setHistory((prev) => [trimmed, ...prev].slice(0, HISTORY_MAX))
+    }
+    setValue('')
+    setHistIdx(-1)
+  }
 
   useInput((input, key) => {
+    // Enter → submit
     if (key.return) {
-      const text = value.trim();
-      if (text) onSubmit(text);
-      setValue("");
-      return;
+      submit(value)
+      return
     }
+    // Backspace / Delete → drop last char
     if (key.backspace || key.delete) {
-      setValue((prev) => prev.slice(0, -1));
-      return;
+      setValue((prev) => prev.slice(0, -1))
+      return
     }
-    // Ignore other special keys, only handle printable input
+    // History navigation
+    if (key.upArrow) {
+      setHistIdx((idx) => {
+        const next = Math.min(idx + 1, history.length - 1)
+        if (next >= 0) setValue(history[next])
+        return next
+      })
+      return
+    }
+    if (key.downArrow) {
+      setHistIdx((idx) => {
+        const next = idx - 1
+        if (next < 0) {
+          setValue('')
+          return -1
+        }
+        setValue(history[next])
+        return next
+      })
+      return
+    }
+    // Ignore other special keys; only printable chars append
     if (
       !key.ctrl &&
       !key.meta &&
       !key.tab &&
-      !key.upArrow &&
-      !key.downArrow &&
       !key.leftArrow &&
       !key.rightArrow &&
       !key.pageUp &&
       !key.pageDown &&
       !key.escape
     ) {
-      setValue((prev) => prev + input);
+      setValue((prev) => prev + input)
     }
-  });
+  })
 
   return (
-    <Box>
-      <Text bold color={ACCENT}>❯ </Text>
-      <Text color={TEXT}>{value}</Text>
-      {/* Blinking cursor */}
+    <Box width={width}>
+      <Text bold color={ACCENT}>
+        ❯{' '}
+      </Text>
+      <Text>{value}</Text>
+      {/* Blinking-block-style cursor */}
       <Text color={ACCENT}>█</Text>
     </Box>
-  );
+  )
 }

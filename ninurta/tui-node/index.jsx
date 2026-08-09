@@ -1,75 +1,34 @@
 #!/usr/bin/env -S npx tsx
-// Ninurta TUI — Ink-based transparent inline chat interface.
-// Built following the Hermes Agent TUI patterns (ui-tui/src/entry.tsx).
+// Ninurta TUI — Hermes Agent TUI architecture.
+// Node/Ink frontend (ui-tui/src/entry.tsx pattern) + Python JSON-RPC gateway.
 
-import React, { useState } from "react";
-import { render, Box, Text, useInput, useApp } from "ink";
+import React from 'react'
+import { render } from '@hermes/ink'
 
-import Banner from "./components/Banner.jsx";
-import InfoBox from "./components/InfoBox.jsx";
-import ChatArea from "./components/ChatArea.jsx";
-import StatusBar from "./components/StatusBar.jsx";
-import InputPrompt from "./components/InputPrompt.jsx";
+import { App } from './src/app/App.js'
 
-// ── Startup ──────────────────────────────────────────────────────────────────
 if (!process.stdin.isTTY) {
-  console.log("ninurta-tui: no TTY (stdin is not a terminal)");
-  process.exit(0);
+  console.log('ninurta-tui: no TTY (stdin is not a terminal)')
+  process.exit(0)
 }
 
-// Let the terminal handle display naturally — no clear screen.
-
-// ── Graceful exit ────────────────────────────────────────────────────────────
-const cleanup = () => {
-  // Reset terminal — nothing to reset yet, but placeholder for future mouse/raw mode cleanup
-  process.stdout.write("\x1b[?25h"); // show cursor
-};
-
-process.on("exit", cleanup);
+// Clean startup slate (hermes entry.tsx): clear screen + scrollback so the TUI
+// fills the terminal from the top with no leftover output above it.
+process.stdout.write('\x1b[2J\x1b[H\x1b[3J')
 
 // ── Parse CLI args ───────────────────────────────────────────────────────────
-const args = process.argv.slice(2);
-const modelId = args[0] || "gemini-2.5-flash";
-const cwd = args[1] || process.cwd();
-const version = "0.1.0";
+const args = process.argv.slice(2)
+const modelId = args[0] || 'gemini-2.5-flash'
+const cwd = args[1] || process.cwd()
+const version = '0.2.0'
 
-// ── App ──────────────────────────────────────────────────────────────────────
-function App() {
-  const { exit } = useApp();
-  const [messages, setMessages] = useState([]);
-
-  useInput((input, key) => {
-    if (key.ctrl && (input === "c" || input === "d")) {
-      exit();
-    }
-  });
-
-  const handleSubmit = (text) => {
-    const low = text.toLowerCase();
-    if (["quit", "exit", "q", "/exit", "/quit"].includes(low)) {
-      exit();
-      return;
-    }
-    setMessages((prev) => [
-      ...prev,
-      { role: "you", text },
-      { role: "ninurta", text: `You said \u2014 ${text}` },
-    ]);
-  };
-
-  // JSX via tsx
-  return (
-    <Box flexDirection="column">
-      <Banner />
-      <InfoBox modelId={modelId} cwd={cwd} version={version} />
-      <ChatArea messages={messages} />
-      <StatusBar modelId={modelId} cwd={cwd} />
-      <InputPrompt onSubmit={handleSubmit} />
-    </Box>
-  );
+// ── Graceful exit: leave the terminal pristine (hermes setupGracefulExit) ────
+const cleanup = () => {
+  process.stdout.write('\x1b[?25h') // show cursor
 }
+process.on('exit', cleanup)
 
-// ── Render (synchronous — event loop kept alive by stdin in raw mode) ───────
-render(<App />, {
-  exitOnCtrlC: false,
-});
+// ── Render ───────────────────────────────────────────────────────────────────
+render(<App modelId={modelId} cwd={cwd} version={version} />, {
+  exitOnCtrlC: false
+})
