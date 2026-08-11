@@ -1,78 +1,108 @@
-// Bordered info box with bow art (left) + system info (right).
+// Bordered info box: bow art (left) + system info (right).
+// Pipelines / Commands sections are expandable — Tab focuses them, Enter toggles.
 // Spans the FULL terminal width; content clamped defensively on narrow screens.
 
 import React from 'react'
 import { Box, Text } from '@hermes/ink'
-import { ACCENT, ACCENT_LIGHT, MUTED, TEXT } from '../lib/palette.js'
+import {
+  ACCENT, ACCENT_LIGHT, PINK, FUCHSIA, MUTED, TEXT, TAGLINE,
+} from '../lib/palette.js'
 import { loadBowArt } from '../lib/art.js'
 
-export default function InfoBox({ modelId, cwd, version, width }) {
+export default function InfoBox({
+  modelId, cwd, version, width,
+  focus, pipesOpen, cmdsOpen,
+}) {
   const bow = loadBowArt()
-  const leftLines = []
-  if (bow) {
-    leftLines.push(...bow.split('\n'))
-  }
-  leftLines.push('')
-  leftLines.push(`${modelId} · Nous Research`)
-  leftLines.push(cwd)
-  leftLines.push(`Session: ${version}`)
 
-  const rightLines = []
-  rightLines.push(`Ninurta v${version}`)
-  rightLines.push('')
-  rightLines.push('▼ Pipelines')
-  rightLines.push('  extract → extractor')
-  rightLines.push('  resume  → reader · validator · reviewer · saver')
-  rightLines.push('')
-  rightLines.push('▼ Commands')
-  rightLines.push('  /extract <url>   run job extraction')
-  rightLines.push('  /resume          resume stats from SQLite')
-  rightLines.push('  /search <q>      run matching graph')
-  rightLines.push('  /clear           reset transcript')
-  rightLines.push('  quit / Ctrl+C    exit')
+  // ── Left column: bow art + identity ────────────────────────────────────
+  const left = [
+    ...(bow ? bow.split('\n').map((l) => ({ text: l, color: ACCENT_LIGHT })) : []),
+    { text: '', color: TEXT },
+    { text: `${modelId} · Nous Research`, color: PINK, bold: true },
+    { text: cwd, color: TEXT },
+    { text: `Session: ${version}`, color: MUTED },
+  ]
 
-  // Defensive clamp: never exceed the terminal.
+  // ── Right column: pipelines + commands (expandable) ────────────────────
+  const sectionHeader = (title, open, focused) => ({
+    text: `${open ? '▼' : '▶'} ${title}`,
+    color: focused ? TAGLINE : PINK,
+    bold: true,
+  })
+
+  const right = [
+    { text: `Ninurta v${version}`, color: FUCHSIA, bold: true },
+    { text: '', color: TEXT },
+    sectionHeader('Pipelines', pipesOpen, focus === 'pipelines'),
+    ...(pipesOpen
+      ? [
+          { text: '  extract → extractor', color: TEXT },
+          { text: '  resume  → reader · validator · reviewer · saver', color: TEXT },
+          { text: '  match   → extractor · matcher (score resume vs JD)', color: TEXT },
+        ]
+      : []),
+    { text: '', color: TEXT },
+    sectionHeader('Commands', cmdsOpen, focus === 'commands'),
+    ...(cmdsOpen
+      ? [
+          { text: '  paste a JD   → extract + load resume + score', color: TEXT },
+          { text: '  /model        show current model', color: TEXT },
+          { text: '  /model <id>   switch model (gemini-3.6-flash)', color: TEXT },
+          { text: '  /db           db summary (tables + counts)', color: TEXT },
+          { text: '  /db resumes   list all resumes by id', color: TEXT },
+          { text: '  /db jobs      list all jobs (latest first)', color: TEXT },
+          { text: '  /db resume 1  show resume detail', color: TEXT },
+          { text: '  /db job 3     show job detail', color: TEXT },
+          { text: '  /clear        reset transcript', color: TEXT },
+          { text: '  Ctrl+C cancel · Ctrl+D quit', color: TEXT },
+        ]
+      : []),
+  ]
+
+  // ── Geometry: box stretches to full width, columns keep content size ───
   const clamp = (s) => (width && s.length > width - 2 ? s.slice(0, width - 2) : s)
-
-  // The box STRETCHES to the full terminal width; columns keep content size
-  // and extra space is absorbed by the row filler.
   const boxW = Math.max(8, width)
   const innerW = boxW - 4
   const gap = 4
-  const rightMax = Math.max(4, innerW - gap - 16)
-  const rightW = Math.min(Math.max(...rightLines.map((l) => l.length), 0), rightMax)
-  const leftW = Math.min(Math.max(...leftLines.map((l) => l.length), 0), innerW - gap - rightW)
+  const rightW = Math.min(Math.max(...right.map((r) => r.text.length), 0), Math.max(4, innerW - gap - 16))
+  const leftW = Math.min(Math.max(...left.map((r) => r.text.length), 0), Math.max(4, innerW - gap - rightW))
+  const filler = Math.max(0, innerW - leftW - gap - rightW)
 
-  const maxRows = Math.max(leftLines.length, rightLines.length)
-  while (leftLines.length < maxRows) leftLines.push('')
-  while (rightLines.length < maxRows) rightLines.push('')
+  const maxRows = Math.max(left.length, right.length)
+  while (left.length < maxRows) left.push({ text: '', color: TEXT })
+  while (right.length < maxRows) right.push({ text: '', color: TEXT })
 
   const title = ` NINURTA v${version} `
   const topPad = Math.max(0, boxW - 2 - title.length)
-
-  const bowLineCount = bow ? bow.split('\n').length : 0
 
   return (
     <Box flexDirection="column" width={boxW}>
       <Text color={ACCENT}>
         {'╭'}{title}{'─'.repeat(topPad)}{'╮'}
       </Text>
-      {leftLines.map((_, i) => {
-        const lPadded = clamp(leftLines[i]).padEnd(leftW)
-        const rPadded = clamp(rightLines[i]).padEnd(rightW)
-        const row = `${lPadded}${' '.repeat(gap)}${rPadded}`.padEnd(innerW).slice(0, innerW)
-        return (
-          <Text key={i} color={i < bowLineCount ? ACCENT_LIGHT : TEXT}>
-            {'│ '}{row}{' │'}
+
+      {left.map((l, i) => (
+        <Box key={i} flexDirection="row" width={boxW}>
+          <Text color={ACCENT}>│ </Text>
+          <Text color={l.color} bold={l.bold}>
+            {clamp(l.text).padEnd(leftW)}
           </Text>
-        )
-      })}
+          <Text>{' '.repeat(gap)}</Text>
+          <Text color={right[i].color} bold={right[i].bold}>
+            {clamp(right[i].text).padEnd(rightW)}
+          </Text>
+          <Text>{' '.repeat(filler)}</Text>
+          <Text color={ACCENT}> │</Text>
+        </Box>
+      ))}
+
       <Text color={ACCENT}>
         {'╰'}{'─'.repeat(Math.max(0, boxW - 2))}{'╯'}
       </Text>
       <Text> </Text>
       <Text color={MUTED}>
-        Type below and press Enter — gateway streams the answer back. quit / Ctrl+C to exit.
+        Tab: focus sections · Enter: toggle · type & Enter: send · Ctrl+D: quit
       </Text>
       <Text> </Text>
     </Box>

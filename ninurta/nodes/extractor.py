@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import json
-import re
-
 from ninurta.llm.factory import get_llm
+from ninurta.nodes._llm_helpers import _call_llm, _extract_json
 from ninurta.prompts.registry import prompt_registry
 from ninurta.schemas.job_description import JobDescription
 from ninurta.state import State
 from ninurta.utils.logger import get_logger
 
 log = get_logger(__name__)
-
 
 
 
@@ -30,21 +27,9 @@ def extractor_node(state: State) -> dict:
     log.info("Sending to [bold]%s[/bold] via LangGraph...", llm.model_id)
     
     try:
-        result = llm.complete(messages, max_tokens=4096, thinking=False)
-        raw = result.text
-
-        # Parse JSON
-        raw_clean = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        raw_clean = re.sub(r"```(?:json)?", "", raw_clean).strip()
-        raw_clean = raw_clean.replace("```", "").strip()
-        
-        match = re.search(r"\{.*\}", raw_clean, re.DOTALL)
-        if not match:
-            return {"error": f"Model returned no JSON object. Output: {raw[:100]}..."}
-            
-        data = json.loads(match.group())
+        result = _call_llm(llm, messages, max_tokens=4096)
+        data = _extract_json(result.text, llm.model_id, phase="Job extraction")
         parsed_job = JobDescription(**data)
-        
         return {"parsed_job": parsed_job, "error": None}
         
     except Exception as e:

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { GatewayClient } from '../gateway/gatewayClient.js'
-import { addMessage, clearTurn, endTurn, setStep, appendStream, getTurnState } from './turnStore.js'
+import { addMessage, clearTurn, endTurn, setStep, setBusy, appendStream, getTurnState, $modelId } from './turnStore.js'
 
 export interface MainAppApi {
   gateway: GatewayClient
@@ -11,6 +11,7 @@ export interface MainAppApi {
   stderrLog: string[]
   sendMessage: (text: string) => Promise<void>
   runSlash: (cmd: string, args: string[]) => Promise<void>
+  cancel: () => void
 }
 
 export function useMainApp(): MainAppApi {
@@ -59,6 +60,7 @@ export function useMainApp(): MainAppApi {
     const gw = gwRef.current
     if (!gw) return
     addMessage({ role: 'user', text })
+    setBusy(true)
     setStep('sending…')
     try {
       await gw.request('session.send', { message: text })
@@ -76,42 +78,84 @@ export function useMainApp(): MainAppApi {
       case 'clear':
         clearTurn()
         return
-      case 'extract': {
-        const url = args[0]
-        if (!url) {
-          addMessage({ role: 'system', text: 'usage: /extract <job-url>' })
+      case 'model': {
+        // /model                → show current model
+        // /model <model-id>     → switch model (e.g. /model gemini-3.6-flash)
+        // /model <provider:name> → switch provider + model
+        const modelId = args[0]
+        if (!modelId) {
+          setStep('reading model…')
+          try {
+            const res = (await gw.request('model.get', {})) as { full?: string }
+            endTurn(res?.full ?? 'unknown model')
+          } catch (e) {
+            endTurn(undefined, e instanceof Error ? e.message : String(e))
+          }
           return
         }
-        setStep('extracting…')
+        setStep('switching model…')
         try {
-          const res = (await gw.request('job.extract', { url })) as { status?: string; url?: string }
-          endTurn(`extracted ${res?.url ?? url}`)
+          const res = (await gw.request('model.set', { model_id: modelId })) as { model?: string; status?: string }
+          const newModel = res?.model ?? modelId
+          $modelId.set(newModel)  // update status bar + info box reactively
+          endTurn(`model switched to ${newModel}`)
         } catch (e) {
           endTurn(undefined, e instanceof Error ? e.message : String(e))
         }
         return
       }
-      case 'resume':
-        setStep('reading resume…')
-        try {
-          const res = (await gw.request('resume.stats', {})) as { summary?: string }
-          endTurn(res?.summary ?? 'no resume parsed')
-        } catch (e) {
-          endTurn(undefined, e instanceof Error ? e.message : String(e))
+      case 'db': {
+        // /db                  → summary of all tables
+        // /db resumes          → list resumes
+        // /db jobs             → list jobs
+        // /db resume <id>      → detail for resume row
+        // /db job <id>         → detail for job row
+        const sub = args[0]
+        if (!sub) {
+          setStep('reading db…')
+          try {
+            const res = (await gw.request('db.inspect', {})) as { text?: string }
+            endTurn(res?.text ?? 'db empty')
+          } catch (e) {
+            endTurn(undefined, e instanceof Error ? e.message : String(e))
+          }
+          return
         }
-        return
-      case 'search':
-        setStep('running matching graph…')
-        try {
-          await gw.request('search.run', { query: args.join(' ') || undefined })
-        } catch (e) {
-          endTurn(undefined, e instanceof Error ? e.message : String(e))
+        const idArg = args[1]
+        if (sub === 'resumes' || sub === 'jobs') {
+          setStep(`listing ${sub}…`)
+          try {
+            const res = (await gw.request('db.inspect', { table: sub })) as { text?: string }
+            endTurn(res?.text ?? 'no rows')
+          } catch (e) {
+            endTurn(undefined, e instanceof Error ? e.message : String(e))
+          }
+          return
         }
+        if ((sub === 'resume' || sub === 'job') && idArg) {
+          setStep(`fetching ${sub} ${idArg}…`)
+          try {
+            const res = (await gw.request('db.inspect', { table: sub, id: parseInt(idArg, 10) })) as { text?: string }
+            endTurn(res?.text ?? 'not found')
+          } catch (e) {
+            endTurn(undefined, e instanceof Error ? e.message : String(e))
+          }
+          return
+        }
+        addMessage({ role: 'system', text: 'usage: /db | /db resumes|jobs | /db resume|job <id>' })
         return
+      }
       default:
         addMessage({ role: 'system', text: `unknown command: /${cmd}` })
     }
   }, [])
 
-  return { gateway: gwRef.current as GatewayClient, ready, error, stderrLog, sendMessage, runSlash }
+  const cancel = useCallback(() => {
+    const gw = gwRef.current
+    if (!gw) return
+    setStep('cancelling…')
+    void gw.request('pipeline.cancel', {}).catch(() => {})
+  }, [])
+
+  return { gateway: gwRef.current as GatewayClient, ready, error, stderrLog, sendMessage, runSlash, cancel }
 }

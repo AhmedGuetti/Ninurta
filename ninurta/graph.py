@@ -1,6 +1,6 @@
 """LangGraph graph definitions for Ninurta.
 
-Two independent pipelines share the same :class:`State`:
+Three independent pipelines share the same :class:`State`:
 
 * ``extract_graph`` — START → extractor → END
   (job-description extraction; run via ``ninurta extract``)
@@ -8,6 +8,8 @@ Two independent pipelines share the same :class:`State`:
   resume_reviewer → resume_saver → END
   (resume parse → LLM validate → user review → save to DB;
   run via ``ninurta resume``)
+* ``match_graph`` — START → extractor → matcher → END
+  (JD extraction → resume–JD scoring; run from the TUI entry point)
 
 ``graph`` is kept as an alias for ``extract_graph`` for backward compatibility.
 """
@@ -22,6 +24,7 @@ from ninurta.nodes.resume_reader import resume_reader_node
 from ninurta.nodes.resume_validator import resume_validator_node
 from ninurta.nodes.resume_reviewer import resume_reviewer_node
 from ninurta.nodes.resume_saver import resume_saver_node
+from ninurta.nodes.matcher import matcher_node
 
 
 # ---------------------------------------------------------------------------
@@ -53,3 +56,17 @@ resume_builder.add_edge("resume_reviewer", "resume_saver")
 resume_builder.add_edge("resume_saver", END)
 
 resume_graph = resume_builder.compile()
+
+
+# ---------------------------------------------------------------------------
+# Match graph — extract JD → score against resume
+# ---------------------------------------------------------------------------
+match_builder = StateGraph(State)
+match_builder.add_node("extractor", extractor_node)
+match_builder.add_node("matcher", matcher_node)
+
+match_builder.add_edge(START, "extractor")
+match_builder.add_edge("extractor", "matcher")
+match_builder.add_edge("matcher", END)
+
+match_graph = match_builder.compile()

@@ -1,22 +1,26 @@
-// Ninurta color palette — violet theme, transparent backgrounds.
-// Mirror of ninurta/tui/palette.py
+// Ninurta color palette — vibrant magenta/fuchsia theme, transparent backgrounds.
+// Mirror of the user's preferred palette (no opaque backgrounds, ever).
 
-export const ACCENT = "#8b5cf6";        // Violet-500 — primary
-export const ACCENT_DEEP = "#7c3aed";   // Violet-600 — deeper
-export const ACCENT_LIGHT = "#a78bfa";  // Violet-400 — lighter / ametrine
-export const TAGLINE = "#c4b5fd";       // Violet-300 — title / tagline
-export const TEXT = "#ede9fe";          // Violet-100 — body / input
-export const MUTED = "#a78bfa";         // Violet-400 — dim
+export const ACCENT = '#d946ef'        // fuchsia-500 — primary / borders
+export const ACCENT_DEEP = '#a21caf'   // fuchsia-700 — deep
+export const ACCENT_LIGHT = '#f472b6'  // pink-400 — lighter accents
+export const TAGLINE = '#f0abfc'       // fuchsia-300 — title / tagline
+export const TEXT = '#fdf4ff'          // fuchsia-50 — body / input
+export const MUTED = '#a78bfa'         // violet-400 — dim / hints
+export const PINK = '#f472b6'          // alias for accent-light
+export const FUCHSIA = '#d946ef'       // alias for accent
 
-// Violet gradient for banner (lightest → deepest)
+// Fuchsia gradient for the banner (lightest → deepest)
 export const VIOLET_GRADIENT = [
-  "#e9d5ff",  // violet-200
-  "#c084fc",  // purple-400
-  "#a855f7",  // purple-500
-  "#9333ea",  // purple-600
-  "#7c3aed",  // violet-600
-  "#6d28d9",  // violet-700
-];
+  '#fdf4ff', // fuchsia-50
+  '#f0abfc', // fuchsia-300
+  '#f472b6', // pink-400
+  '#d946ef', // fuchsia-500
+  '#a21caf', // fuchsia-700
+  '#701a75', // fuchsia-900
+]
 
 // Status colors
-export const STATUS_READY = "#00ff7f";
+export const STATUS_READY = '#00ff7f'
+export const STATUS_BUSY = '#f472b6'
+export const ERROR = '#fb7185'

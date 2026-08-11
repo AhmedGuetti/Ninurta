@@ -5,6 +5,7 @@ from ninurta.nodes.resume_reader import resume_reader_node
 from ninurta.nodes.resume_validator import resume_validator_node
 from ninurta.nodes.resume_reviewer import resume_reviewer_node
 from ninurta.nodes.resume_saver import resume_saver_node
+from ninurta.nodes.matcher import matcher_node
 
 __all__ = [
     "extractor_node",
@@ -12,4 +13,5 @@ __all__ = [
     "resume_validator_node",
     "resume_reviewer_node",
     "resume_saver_node",
+    "matcher_node",
 ]

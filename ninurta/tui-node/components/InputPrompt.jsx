@@ -1,14 +1,15 @@
 // Bottom input prompt — hermes-ink native (no ink-text-input; that package
 // binds to plain `ink`'s input system, which never fires under @hermes/ink).
 // Chars, backspace, Enter submit, ArrowUp/Down history — all via useInput.
+// `active=false` (Tab focused a section) → input ignores all keys and dims.
 
 import React, { useState } from 'react'
 import { Box, Text, useInput } from '@hermes/ink'
-import { ACCENT } from '../lib/palette.js'
+import { ACCENT, MUTED, TEXT } from '../lib/palette.js'
 
 const HISTORY_MAX = 50
 
-export default function InputPrompt({ onSubmit, width }) {
+export default function InputPrompt({ onSubmit, width, active = true }) {
   const [value, setValue] = useState('')
   const [history, setHistory] = useState([])
   const [histIdx, setHistIdx] = useState(-1)
@@ -24,6 +25,8 @@ export default function InputPrompt({ onSubmit, width }) {
   }
 
   useInput((input, key) => {
+    if (!active) return // focus is on a section header — don't consume keys
+
     // Enter → submit
     if (key.return) {
       submit(value)
@@ -72,12 +75,12 @@ export default function InputPrompt({ onSubmit, width }) {
 
   return (
     <Box width={width}>
-      <Text bold color={ACCENT}>
+      <Text bold color={active ? ACCENT : MUTED}>
         ❯{' '}
       </Text>
-      <Text>{value}</Text>
+      <Text color={active ? TEXT : MUTED}>{value}</Text>
       {/* Blinking-block-style cursor */}
-      <Text color={ACCENT}>█</Text>
+      <Text color={active ? ACCENT : MUTED}>█</Text>
     </Box>
   )
 }

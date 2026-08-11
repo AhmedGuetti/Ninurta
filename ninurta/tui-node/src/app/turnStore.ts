@@ -21,6 +21,9 @@ export const $turnState = atom<TurnState>({
   busy: false
 })
 
+/** Reactive model ID — updated by /model command, read by StatusBar + InfoBox. */
+export const $modelId = atom<string>('gemini-3.6-flash')
+
 export const getTurnState = (): TurnState => $turnState.get()
 
 const subscribeTurn = (cb: () => void) => $turnState.listen(() => cb())
@@ -40,6 +43,8 @@ export const addMessage = (msg: Msg) =>
   patchTurnState({ messages: [...getTurnState().messages, msg] })
 
 export const setStep = (step: string) => patchTurnState({ step })
+
+export const setBusy = (busy: boolean) => patchTurnState({ busy })
 
 export const appendStream = (text: string) =>
   patchTurnState({ streaming: getTurnState().streaming + text })

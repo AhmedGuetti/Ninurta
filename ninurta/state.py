@@ -18,5 +18,8 @@ class State(TypedDict):
     resume_text: str
     parsed_resume: dict | None
 
+    # ── Match graph ──────────────────────────────────────────────────────
+    match_result: dict | None
+
     # ── Shared ───────────────────────────────────────────────────────────
     error: str | None

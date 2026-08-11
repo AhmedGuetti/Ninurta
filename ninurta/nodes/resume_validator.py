@@ -17,6 +17,7 @@ import re
 from rich.console import Console
 
 from ninurta.llm.factory import get_llm
+from ninurta.nodes._llm_helpers import _call_llm, _extract_json
 from ninurta.prompts.registry import prompt_registry
 from ninurta.state import State
 from ninurta.utils.logger import get_logger
@@ -299,9 +300,9 @@ def resume_validator_node(state: State) -> dict:
             "resume_validator", resume_text=resume_text, parsed_json=parsed
         )
         log.info("Validating resume with [bold]%s[/]...", llm.model_id)
-        result = llm.complete(messages, max_tokens=_MAX_TOKENS, thinking=False)
+        result = _call_llm(llm, messages, max_tokens=_MAX_TOKENS)
 
-        data = _extract_json_object(result.text)
+        data = _extract_json(result.text, llm.model_id, phase="Resume validation")
         validated = normalize_parsed(data)
         validated = ground_against_resume(validated, resume_text)
 
