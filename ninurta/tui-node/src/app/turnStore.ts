@@ -1,6 +1,5 @@
 // Ninurta turnStore — mirrors hermes-agent ui-tui/src/app/turnStore.ts (nanostores).
 import { atom } from 'nanostores'
-import { useSyncExternalStore } from 'react'
 
 export interface Msg {
   role: 'user' | 'assistant' | 'system'
@@ -25,16 +24,6 @@ export const $turnState = atom<TurnState>({
 export const $modelId = atom<string>('gemini-3.6-flash')
 
 export const getTurnState = (): TurnState => $turnState.get()
-
-const subscribeTurn = (cb: () => void) => $turnState.listen(() => cb())
-
-/** React binding — same shape as hermes `useTurnSelector`. */
-export const useTurnState = (): TurnState =>
-  useSyncExternalStore(
-    subscribeTurn,
-    () => getTurnState(),
-    () => getTurnState()
-  )
 
 export const patchTurnState = (next: Partial<TurnState>) =>
   $turnState.set({ ...getTurnState(), ...next })

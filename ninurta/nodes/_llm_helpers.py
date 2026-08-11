@@ -19,7 +19,7 @@ log = get_logger(__name__)
 # ── LLM call with timeout ────────────────────────────────────────────────
 
 
-def _call_llm(llm, messages: list[dict], max_tokens: int = 4096, timeout: int = 120) -> LLMResult:
+def _call_llm(llm, messages: list[dict], max_tokens: int = 8192, timeout: int = 120) -> LLMResult:
     """Call ``llm.complete()`` with a thread-pool timeout.
 
     Without this wrapper a hung API call freezes the TUI indefinitely.
@@ -80,6 +80,14 @@ def _extract_json(raw: str, llm_model: str = "", phase: str = "") -> dict:
     end = raw_clean.rfind("}")
 
     if start == -1 or end == -1 or start >= end:
+        # 6. Handle truncated output (opening { but no closing })
+        if start != -1 and end == -1:
+            raise ValueError(
+                f"[{phase}] {llm_model} response has an opening '{{' but no "
+                f"closing '}}' — output may have been truncated by max_tokens. "
+                f"First 100 chars: {raw[:100]!r}"
+            )
+
         # Try array fallback
         arr_start = raw_clean.find("[")
         arr_end = raw_clean.rfind("]")
@@ -95,14 +103,6 @@ def _extract_json(raw: str, llm_model: str = "", phase: str = "") -> dict:
         )
 
     json_str = raw_clean[start:end + 1]
-
-    # 6. Handle truncated output (opening { but no closing })
-    if end == -1 and start != -1:
-        raise ValueError(
-            f"[{phase}] {llm_model} response has an opening '{{' but no "
-            f"closing '}}' — output may have been truncated by max_tokens. "
-            f"First 100 chars: {raw[:100]!r}"
-        )
 
     # 7. Parse
     try:

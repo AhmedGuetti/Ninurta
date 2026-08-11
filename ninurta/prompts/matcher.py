@@ -96,6 +96,10 @@ a completed version of the JSON template. Follow all rules from the system promp
 {resume_text[:8000]}
 \"\"\"
 
+=== JSON TEMPLATE ===
+Return exactly this JSON structure filled out:
+{_TEMPLATE}
+
 Return the completed JSON object now:"""
 
     return [

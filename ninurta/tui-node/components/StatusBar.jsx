@@ -59,7 +59,7 @@ export default function StatusBar({ modelId, cwd, width, ready, busy, step }) {
       <Text color={MUTED}> {cwd}</Text>
       <Text> </Text>
       <Text color={MUTED} dim>
-        [Tab: sections · Ctrl+G: log]
+        [Tab: sections · Ctrl+C: cancel · Ctrl+G: log]
       </Text>
     </Box>
   )

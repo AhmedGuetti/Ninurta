@@ -11,10 +11,7 @@ import StatusBar from '../../components/StatusBar.jsx'
 import InputPrompt from '../../components/InputPrompt.jsx'
 import { useMainApp } from './useMainApp.js'
 import { $turnState, $modelId } from './turnStore.js'
-
-const ACCENT = '#d946ef'
-const MUTED = '#a78bfa'
-const TEXT = '#fdf4ff'
+import { ACCENT, MUTED, TEXT } from '../../lib/palette.js'
 
 type FocusZone = 'input' | 'pipelines' | 'commands'
 
@@ -33,10 +30,8 @@ export function App({ cwd, version }: { cwd: string; version: string }) {
   const [pipesOpen, setPipesOpen] = useState(true)
   const [cmdsOpen, setCmdsOpen] = useState(true)
 
-  // Tab: cycle focus  input → pipelines → commands → input
-  // Enter: toggle focused section (returns focus to input)
-  // Esc:   back to input
-  // Ctrl+C: cancel running pipeline · Ctrl+D: exit · Ctrl+G: gateway log
+  // Key bindings: Tab cycle focus, Enter toggle section, Esc back to input,
+  // Ctrl+C cancel pipeline, Ctrl+D exit, Ctrl+G gateway log
   useInput((input: string, key: { ctrl?: boolean; tab?: boolean; return?: boolean; escape?: boolean }) => {
     if (key.ctrl && input === 'c') { cancel(); return }
     if (key.ctrl && input === 'd') process.exit(0)

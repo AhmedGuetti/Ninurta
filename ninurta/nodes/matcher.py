@@ -38,7 +38,7 @@ def matcher_node(state: State) -> dict:
             resume_text=resume_text,
         )
         log.info("Scoring match with [bold]%s[/]...", llm.model_id)
-        result = _call_llm(llm, messages, max_tokens=4096)
+        result = _call_llm(llm, messages, max_tokens=8192)
         data = _extract_json(result.text, llm.model_id, phase="Match scoring")
 
         log.info(

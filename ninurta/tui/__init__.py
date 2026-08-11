@@ -1,4 +1,4 @@
-"""Ninurta TUI package — standalone Hermes-style chat interface."""
+"""Ninurta TUI package — shared art and palette used by the CLI welcome screen."""
 
 from ninurta.tui.app import run
 

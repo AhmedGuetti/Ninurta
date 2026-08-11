@@ -27,7 +27,7 @@ def extractor_node(state: State) -> dict:
     log.info("Sending to [bold]%s[/bold] via LangGraph...", llm.model_id)
     
     try:
-        result = _call_llm(llm, messages, max_tokens=4096)
+        result = _call_llm(llm, messages, max_tokens=8192)
         data = _extract_json(result.text, llm.model_id, phase="Job extraction")
         parsed_job = JobDescription(**data)
         return {"parsed_job": parsed_job, "error": None}
