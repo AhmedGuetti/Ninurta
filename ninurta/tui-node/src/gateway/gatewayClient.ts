@@ -14,8 +14,6 @@ export type NinurtaGatewayEvent =
   | { method: 'turn.delta'; params: { text?: string } }
   | { method: 'turn.end'; params: { text?: string; error?: string } }
   | { method: 'pipeline.progress'; params: { step: string; message?: string } }
-  | { method: 'tool.start'; params: { name: string; input?: unknown } }
-  | { method: 'tool.end'; params: { name: string; output?: unknown } }
 
 interface PendingRequest {
   resolve: (value: unknown) => void

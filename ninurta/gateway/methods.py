@@ -13,6 +13,7 @@ from ninurta.gateway.handlers import (
     handle_db_inspect,
     handle_model_get,
     handle_model_set,
+    handle_model_list,
     handle_config_get,
     handle_config_set,
 )
@@ -34,6 +35,7 @@ def get_dispatch_map() -> dict:
         "pipeline.cancel": handle_pipeline_cancel,
         "db.inspect": handle_db_inspect,
         "model.get": handle_model_get,
+        "model.list": handle_model_list,
         "model.set": handle_model_set,
         "config.get": handle_config_get,
         "config.set": handle_config_set,

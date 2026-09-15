@@ -8,6 +8,7 @@ import {
   ACCENT, ACCENT_LIGHT, PINK, FUCHSIA, MUTED, TEXT, TAGLINE,
 } from '../lib/palette.js'
 import { loadBowArt } from '../lib/art.js'
+import { SLASH_COMMANDS } from '../src/app/slashCommands.js'
 
 export default function InfoBox({
   modelId, cwd, version, width,
@@ -47,14 +48,12 @@ export default function InfoBox({
     ...(cmdsOpen
       ? [
           { text: '  paste a JD   → extract + load resume + score', color: TEXT },
-          { text: '  /model        show current model', color: TEXT },
-          { text: '  /model <id>   switch model (gemini-3.6-flash)', color: TEXT },
-          { text: '  /db           db summary (tables + counts)', color: TEXT },
-          { text: '  /db resumes   list all resumes by id', color: TEXT },
-          { text: '  /db jobs      list all jobs (latest first)', color: TEXT },
-          { text: '  /db resume 1  show resume detail', color: TEXT },
-          { text: '  /db job 3     show job detail', color: TEXT },
-          { text: '  /clear        reset transcript', color: TEXT },
+          // Derive from the same registry the completion dropdown uses —
+          // help text and autocomplete can never drift apart.
+          ...SLASH_COMMANDS.map((c) => ({
+            text: `  ${c.usage.padEnd(16)}${c.description}`,
+            color: TEXT,
+          })),
           { text: '  Ctrl+C cancel · Ctrl+D quit', color: TEXT },
         ]
       : []),

@@ -26,6 +26,121 @@ BANNER = """\
 _DEFAULT_MODEL = "gemini-3.6-flash"
 
 
+def _print_job_table(job) -> None:
+    """Render an extracted JobDescription as a Rich table (shared by extract + pipeline)."""
+    from rich import box
+    from rich.table import Table
+
+    t = Table(
+        title="[bold green]Extracted Job Details[/]",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold cyan",
+        expand=False,
+    )
+    t.add_column("Field", style="dim", min_width=22)
+    t.add_column("Value")
+
+    salary = ""
+    if job.salary_min or job.salary_max:
+        lo = job.salary_min or "?"
+        hi = job.salary_max or "?"
+        cur = job.salary_currency or ""
+        per = job.salary_period or ""
+        salary = f"{cur} {lo}–{hi} / {per}".strip()
+
+    rows = [
+        ("Position",          job.position_title),
+        ("Company",           job.company_name),
+        ("Location",          f"{job.city or ''}, {job.country or ''}".strip(", ")),
+        ("Employment type",   job.employment_type),
+        ("Work mode",         job.work_mode),
+        ("Experience level",  job.experience_level),
+        ("Salary",            salary),
+        ("Skills required",   ", ".join(job.skills_required or [])),
+        ("Source URL",        job.source_url),
+    ]
+    for field, value in rows:
+        if value:
+            t.add_row(field, value)
+    _console.print(t)
+
+
+def _print_match_result(match_data: dict) -> None:
+    """Render the matcher's output as richly styled Markdown."""
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+    from ninurta.tui.palette import ACCENT, ACCENT_LIGHT, TAGLINE
+
+    overall = match_data.get("overall_score", 0)
+    skills = match_data.get("skills_score", 0)
+    exp = match_data.get("experience_score", 0)
+    edu = match_data.get("education_score", 0)
+    resp = match_data.get("responsibilities_score", 0)
+    
+    overall_pct = int(overall * 100)
+    score_color = "#00ff00" if overall_pct >= 80 else "#ffff00" if overall_pct >= 60 else "#ff0000"
+
+    md_lines = [
+        f"## 🎯 Match Analysis: **{overall_pct}%**",
+        "",
+        "### 📊 Breakdown",
+        f"- **Skills:** {int(skills * 100)}%",
+        f"- **Experience:** {int(exp * 100)}%"
+    ]
+    
+    if edu is not None:
+        md_lines.append(f"- **Education:** {int(edu * 100)}%")
+    if resp is not None:
+        md_lines.append(f"- **Responsibilities:** {int(resp * 100)}%")
+        
+    summary = match_data.get("summary")
+    if summary:
+        md_lines.extend(["", "### 📋 Summary", summary])
+        
+    strengths = match_data.get("strengths") or []
+    if strengths:
+        md_lines.extend(["", "### ✅ Strengths"])
+        for s in strengths[:5]:
+            md_lines.append(f"- {s}")
+            
+    gaps = match_data.get("gaps") or []
+    if gaps:
+        md_lines.extend(["", "### ⚠ Gaps"])
+        for g in gaps[:5]:
+            md_lines.append(f"- {g}")
+            
+    action_items = match_data.get("action_items") or []
+    if action_items:
+        md_lines.extend(["", "### 🔧 Action Items"])
+        for a in action_items[:5]:
+            md_lines.append(f"- {a}")
+
+    md_str = "\n".join(md_lines)
+    _console.print()
+    _console.print(Panel(Markdown(md_str), border_style=ACCENT, title="[bold]Detailed Report[/]"))
+    _console.print()
+
+
+def _print_dedup_verdict(dedup_result: dict | None) -> None:
+    """Stream the heuristic dedup verdict the way the TUI does."""
+    verdict = (dedup_result or {}).get("verdict", "new")
+    matches = (dedup_result or {}).get("matches") or []
+
+    if verdict == "duplicate" and matches:
+        m = matches[0]
+        tag = "✓applied" if m.get("already_applied") else "seen before"
+        _console.print(f"[bold yellow]⚡ Already in DB[/] (id={m['id']}, {m['score']:.0%} match, {tag})")
+        if len(matches) > 1:
+            others = ", ".join(f"id={x['id']} ({x['score']:.0%})" for x in matches[1:])
+            _console.print(f"[dim]    └ similar too: {others}[/]")
+    elif verdict == "similar" and matches:
+        m = matches[0]
+        _console.print(f"[bold yellow]⚠ Similar listing[/] (id={m['id']}, {m['score']:.0%} match) — check before applying")
+    else:
+        _console.print("[dim]· new listing (not in DB)[/]")
+
+
 def _list_gemini_models() -> None:
     """Fetch and display available Gemini models with pricing and descriptions."""
     from ninurta.config import get_gemini_api_key
@@ -103,39 +218,7 @@ class NinurtaCLI:
         )
 
         def _print_result(job: JobDescription) -> None:
-            t = Table(
-                title="[bold green]Extracted Job Details[/]",
-                box=box.ROUNDED,
-                show_header=True,
-                header_style="bold cyan",
-                expand=False,
-            )
-            t.add_column("Field", style="dim", min_width=22)
-            t.add_column("Value")
-
-            salary = ""
-            if job.salary_min or job.salary_max:
-                lo = job.salary_min or "?"
-                hi = job.salary_max or "?"
-                cur = job.salary_currency or ""
-                per = job.salary_period or ""
-                salary = f"{cur} {lo}–{hi} / {per}".strip()
-
-            rows = [
-                ("Position",          job.position_title),
-                ("Company",           job.company_name),
-                ("Location",          f"{job.city or ''}, {job.country or ''}".strip(", ")),
-                ("Employment type",   job.employment_type),
-                ("Work mode",         job.work_mode),
-                ("Experience level",  job.experience_level),
-                ("Salary",            salary),
-                ("Skills required",   ", ".join(job.skills_required or [])),
-                ("Source URL",        job.source_url),
-            ]
-            for field, value in rows:
-                if value:
-                    t.add_row(field, value)
-            _console.print(t)
+            _print_job_table(job)
 
         def _print_usage_summary() -> None:
             """Print a token usage / cost summary if usage was tracked."""
@@ -185,8 +268,16 @@ class NinurtaCLI:
                 break
 
             try:
-                # Invoke the LangGraph workflow
-                result = graph.invoke({"jd_text": jd_text, "parsed_job": None, "test_tool_result": None, "error": None})
+                from rich.status import Status
+                result = {}
+                with Status("[bold cyan]Extracting job description...[/bold cyan]") as status:
+                    for event in graph.stream({"jd_text": jd_text, "parsed_job": None, "test_tool_result": None, "error": None}):
+                        for node_name, state_update in event.items():
+                            if node_name == "extractor":
+                                status.update("[bold magenta]Extracted constraints... Checking DB for duplicates...[/]")
+                            elif node_name == "job_dedup":
+                                status.update("[bold green]✓ Extraction complete[/]")
+                            result.update(state_update)
                 
                 if result.get("error"):
                     _console.print(f"[bold red]Extraction failed:[/] {result['error']}")
@@ -256,13 +347,26 @@ class NinurtaCLI:
             return
 
         try:
-            result = resume_graph.invoke(
-                {
-                    "resume_text": resume_text,
-                    "parsed_resume": None,
-                    "error": None,
-                }
-            )
+            from rich.status import Status
+            result = {}
+            with Status("[bold cyan]Parsing and validating resume...[/]") as status:
+                for event in resume_graph.stream(
+                    {
+                        "resume_text": resume_text,
+                        "parsed_resume": None,
+                        "error": None,
+                    }
+                ):
+                    for node_name, state_update in event.items():
+                        if node_name == "resume_reader":
+                            status.update("[bold magenta]Resume read. Validating...[/]")
+                        elif node_name == "resume_validator":
+                            status.update("[bold yellow]Validation complete. Reviewing...[/]")
+                        elif node_name == "resume_reviewer":
+                            status.update("[bold cyan]Review complete. Saving...[/]")
+                        elif node_name == "resume_saver":
+                            status.update("[bold green]✓ Saved to DB[/]")
+                        result.update(state_update)
 
             if result.get("error"):
                 _console.print(f"[bold red]Resume pipeline error:[/] {result['error']}")
@@ -271,6 +375,287 @@ class NinurtaCLI:
             _console.print("\n[bold green]✓[/] Resume pipeline complete.")
         except Exception as exc:
             _console.print(f"[bold red]Pipeline error:[/] {exc}")
+
+    def pipeline(self, stage: str = "full", file: str = "", job_id: int = 0, debug: bool = False) -> None:
+        """Run the full pipeline, or a single stage of it.
+
+        Stages:
+          full     extract JD → dedup → load resume → score   (one shot)
+          extract  extract JD → dedup → SAVE job to DB
+          resume   parse resume → validate → review → SAVE to DB
+          match    score a resume against a JD (extracted, or from DB by id)
+
+        Args:
+            stage:  Which stage to run: full | extract | resume | match.
+            file:   Optional input file.  For full/extract/match a plain-text
+                    JD; for resume a .docx/.pdf/.txt/.md resume.  When omitted,
+                    the input is pasted interactively (Enter twice to submit).
+            job_id: For `match` only — score an already-saved JD from the DB
+                    by id (skips extraction).  Omit to paste/extract a JD.
+            debug:  Enable debug logging.
+        """
+        from ninurta.utils.logger import configure_logging
+
+        configure_logging("DEBUG" if debug else "INFO")
+
+        if stage == "resume":
+            # resume() prints its own banner + rules — delegate cleanly.
+            self._pipeline_resume(file)
+            return
+
+        _console.print(BANNER)
+        if stage == "full":
+            self._pipeline_full(file)
+        elif stage == "extract":
+            self._pipeline_extract(file)
+        elif stage == "match":
+            self._pipeline_match(file, job_id)
+        else:
+            _console.print(
+                f"[bold red]Unknown stage: {stage}[/] — use full | extract | resume | match"
+            )
+
+    def _read_jd_input(self, file: str) -> str | None:
+        """Read a job description from a file or interactive paste."""
+        from ninurta.interface.io import read_stdin_until_double_enter
+
+        if file:
+            with open(file, "r", encoding="utf-8") as f:
+                text = f.read().strip()
+            _console.print(f"[dim]Loaded JD from [/][bold]{file}[/] ([dim]{len(text)} chars[/])\n")
+            return text or None
+
+        _console.print(
+            "[dim]Paste the job description and press Enter twice.  "
+            "Empty + Enter twice = quit.[/]\n"
+        )
+        return read_stdin_until_double_enter(
+            prompt="[bold cyan]Paste JD ↓[/]  [dim](Enter×2 to submit / quit)[/]\n"
+        )
+
+    def _extract_jd(self, jd_text: str):
+        """Run the extract graph; return (parsed_job, dedup_result) or None on error."""
+        from rich.status import Status
+        from ninurta.graph import extract_graph
+
+        result = {}
+        with Status("[bold cyan]Extracting job description...[/bold cyan]") as status:
+            for event in extract_graph.stream({"jd_text": jd_text}):  # type: ignore[arg-type]
+                for node_name, state_update in event.items():
+                    if node_name == "extractor":
+                        status.update("[bold magenta]Extracted constraints... Checking DB for duplicates...[/]")
+                    elif node_name == "job_dedup":
+                        dedup = state_update.get("dedup_result")
+                        if dedup:
+                            verdict = dedup.get("verdict")
+                            if verdict == "duplicate":
+                                status.update("[bold green]✓ Found duplicate[/]")
+                            elif verdict == "similar":
+                                status.update("[bold yellow]⚠ Found similar listing[/]")
+                            else:
+                                status.update("[bold green]✓ New listing[/]")
+                    result.update(state_update)
+        if result.get("error"):
+            _console.print(f"[bold red]Extraction failed:[/] {result['error']}")
+            return None, None
+        parsed_job = result.get("parsed_job")
+        if not parsed_job:
+            _console.print("[bold red]Failed to parse job description.[/]")
+            return None, None
+        return parsed_job, result.get("dedup_result")
+
+    def _load_resume_or_quit(self):
+        """Load resume (DB first, disk fallback); persist if from disk so the
+        match report can link it.  Returns (parsed, raw)."""
+        from ninurta.interface.resume_loader import load_resume_from_db, load_resume_from_disk
+
+        parsed, raw = load_resume_from_db()
+        if parsed or raw:
+            name = (parsed or {}).get("name", "unknown")
+            _console.print(f"[dim]✓ using resume from DB: [/][bold]{name}[/]\n")
+            return parsed, raw
+
+        _console.print("[dim]· no resume in DB, parsing from disk…[/]")
+        parsed, raw = load_resume_from_disk()
+        if parsed or raw:
+            name = (parsed or {}).get("name", "unknown")
+            # Persist the disk parse so the match report links a real resume row.
+            if parsed is not None:
+                try:
+                    from ninurta.db.operations import save_resume
+
+                    save_resume(parsed, raw or "")
+                except Exception as exc:  # noqa: BLE001 — persistence must not block scoring
+                    _console.print(f"[dim yellow]⚠ could not persist resume ({exc})[/]")
+            _console.print(f"[dim]✓ parsed resume from disk: [/][bold]{name}[/]\n")
+            return parsed, raw
+
+        _console.print("[bold red]✗ no resume found in DB or on disk — scoring skipped.[/]")
+        return None, None
+
+    def _score(self, parsed_job, parsed_resume, resume_text, job_id=None, jd_text="") -> dict | None:
+        """Run the matcher (score_graph), print the result, persist a report.
+
+        When ``job_id`` is None the job is saved first (mark_applied=False —
+        scoring a JD is not an application); the report links job × resume ×
+        score in the DB.  Returns match_data or None.
+        """
+        from rich.status import Status
+        from ninurta.graph import score_graph
+
+        match_state = {
+            "jd_text": "",
+            "parsed_job": parsed_job,
+            "parsed_resume": parsed_resume,
+            "resume_text": resume_text,
+        }
+        
+        result = {}
+        with Status("[bold yellow]🧠 Starting analysis of score...[/]") as status:
+            for event in score_graph.stream(match_state):  # type: ignore[arg-type]
+                for node_name, state_update in event.items():
+                    if node_name == "matcher":
+                        status.update("[bold green]✓ Analysis complete[/]")
+                    result.update(state_update)
+        if result.get("error"):
+            _console.print(f"[bold red]Scoring error:[/] {result['error']}")
+            return None
+        match_data = result.get("match_result")
+        if not match_data:
+            _console.print("[bold red]No match data returned.[/]")
+            return None
+        _print_match_result(match_data)
+
+        # ── Persist: job (if new) + structured report ─────────────────
+        from ninurta.db.operations import save_job, save_match_report
+
+        try:
+            if job_id is None:
+                job_id = save_job(parsed_job, jd_text, mark_applied=False)["job_id"]
+            rep = save_match_report(job_id, match_data)
+            _console.print(
+                f"[dim]💾 report #{rep['report_id']} saved "
+                f"(job #{job_id} × resume #{rep['resume_id'] or '—'}) — "
+                f"`ninurta pipeline match --job_id={job_id}` to re-score[/]"
+            )
+        except Exception as exc:  # noqa: BLE001 — persistence must not kill the run
+            _console.print(f"[dim yellow]⚠ could not save report ({exc})[/]")
+
+        return match_data
+
+    def _pipeline_full(self, file: str) -> None:
+        """Stage 'full': extract → dedup → resume → score (the TUI chain)."""
+        _console.rule("[bold cyan]Full Pipeline — extract → dedup → resume → score[/]")
+
+        jd_text = self._read_jd_input(file)
+        if not jd_text:
+            _console.print("\n[bold yellow]Goodbye![/]")
+            return
+
+        _console.print("[dim]▸ extracting…[/]")
+        parsed_job, dedup = self._extract_jd(jd_text)
+        if not parsed_job:
+            return
+
+        _print_job_table(parsed_job)
+        _print_dedup_verdict(dedup)
+
+        parsed_resume, resume_text = self._load_resume_or_quit()
+        if not parsed_resume and not resume_text:
+            return
+
+        resume_name = (parsed_resume or {}).get("name", "resume")
+        _console.print(
+            f"[dim]▸ scoring ({resume_name} vs {parsed_job.position_title})…[/]"
+        )
+        self._score(parsed_job, parsed_resume, resume_text, jd_text=jd_text)
+
+    def _pipeline_extract(self, file: str) -> None:
+        """Stage 'extract': extract JD → dedup → save to DB."""
+        _console.rule("[bold cyan]Stage: JD extraction → save to DB[/]")
+
+        jd_text = self._read_jd_input(file)
+        if not jd_text:
+            _console.print("\n[bold yellow]Goodbye![/]")
+            return
+
+        _console.print("[dim]▸ extracting…[/]")
+        parsed_job, dedup = self._extract_jd(jd_text)
+        if not parsed_job:
+            return
+
+        _print_job_table(parsed_job)
+        _print_dedup_verdict(dedup)
+
+        from ninurta.db import save_job
+
+        db_res = save_job(parsed_job, jd_text)
+        if db_res["status"] == "already_applied":
+            _console.print(
+                "[bold yellow]⚠ This job listing already exists! Flagged as ALREADY APPLIED.[/]"
+            )
+        else:
+            _console.print(f"[bold green]✓[/] Saved to SQLite database ([dim]job id={db_res['job_id']}[/])")
+
+    def _pipeline_resume(self, file: str) -> None:
+        """Stage 'resume': parse → validate → review → save to DB."""
+        # Same pipeline the `ninurta resume` command runs (reader → validator
+        # → reviewer → saver) — delegate to keep one implementation.
+        self.resume(file=file)
+
+    def _pipeline_match(self, file: str, job_id: int) -> None:
+        """Stage 'match': score resume vs a JD — extracted now or from DB by id."""
+        _console.rule("[bold cyan]Stage: Resume vs JD — score[/]")
+
+        if job_id > 0:
+            # Score an already-saved JD from the DB (no extraction).
+            from ninurta.db.models import Job
+            from ninurta.db.session import SessionLocal, init_db
+            from ninurta.schemas.job_description import JobDescription
+
+            init_db()
+            session = SessionLocal()
+            try:
+                job_row = session.query(Job).filter(Job.id == job_id).first()
+            finally:
+                session.close()
+
+            if not job_row:
+                _console.print(f"[bold red]No job with id={job_id} in DB.[/]")
+                return
+
+            try:
+                parsed_job = JobDescription.model_validate_json(job_row.extracted_json)  # type: ignore[arg-type]
+            except Exception:
+                parsed_job = JobDescription(
+                    company_name=job_row.company_name,
+                    position_title=job_row.position_title,
+                )
+            _console.print(
+                f"[dim]✓ loaded job from DB: [/][bold]{parsed_job.position_title} @ {parsed_job.company_name}[/]"
+            )
+            dedup = None
+        else:
+            jd_text = self._read_jd_input(file)
+            if not jd_text:
+                _console.print("\n[bold yellow]Goodbye![/]")
+                return
+            _console.print("[dim]▸ extracting…[/]")
+            parsed_job, dedup = self._extract_jd(jd_text)
+            if not parsed_job:
+                return
+            _print_job_table(parsed_job)
+            _print_dedup_verdict(dedup)
+
+        parsed_resume, resume_text = self._load_resume_or_quit()
+        if not parsed_resume and not resume_text:
+            return
+
+        resume_name = (parsed_resume or {}).get("name", "resume")
+        _console.print(
+            f"[dim]▸ scoring ({resume_name} vs {parsed_job.position_title})…[/]"
+        )
+        self._score(parsed_job, parsed_resume, resume_text, job_id=job_id if job_id > 0 else None)
 
     def tui(self) -> None:
         """Launch the Ninurta chat TUI (Node/Ink)."""
@@ -355,8 +740,10 @@ def _show_welcome() -> None:
     info = Panel(
         f"[bold {ACCENT}]Ninurta v{__version__}[/]\n\n"
         f"[bold {ACCENT}]▼ Pipelines[/]\n"
-        f"[{ACCENT_LIGHT}]  extract[/] → extractor\n"
-        f"[{ACCENT_LIGHT}]  resume[/]  → reader · validator · reviewer · saver\n\n"
+        f"[{ACCENT_LIGHT}]  pipeline full[/]      extract → dedup → resume → score\n"
+        f"[{ACCENT_LIGHT}]  pipeline extract[/]   extract JD + save to DB\n"
+        f"[{ACCENT_LIGHT}]  pipeline resume[/]    parse + save resume\n"
+        f"[{ACCENT_LIGHT}]  pipeline match[/]     score resume vs JD\n\n"
         f"[bold {ACCENT}]▼ Commands[/]\n"
         f"[{ACCENT_LIGHT}]  ninurta tui[/]      interactive chat interface\n"
         f"[{ACCENT_LIGHT}]  ninurta extract[/]  parse a job description\n"

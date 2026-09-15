@@ -8,7 +8,7 @@ import { STATUS_READY, STATUS_BUSY, MUTED, TAGLINE, PINK, TEXT, ACCENT } from '.
 const SPINNER = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷']
 const WORKING_COLOR = '#fbbf24'  // amber-400
 
-export default function StatusBar({ modelId, cwd, width, ready, busy, step }) {
+export default function StatusBar({ modelId, cwd, width, ready, busy, step, stepMsg }) {
   const shortModel = modelId.replace('gemini:', '')
   const statusColor = !ready ? MUTED : busy ? WORKING_COLOR : STATUS_READY
 
@@ -39,6 +39,12 @@ export default function StatusBar({ modelId, cwd, width, ready, busy, step }) {
       ? `${SPINNER[frame]} working... ${elapsed}s`
       : '● ready'
 
+  // Compact cwd so the bar stays ONE line at any width: the bar must never
+  // wrap (a wrapped 2-row status bar bleeds below the completion overlay and
+  // overlaps the input prompt).
+  const parts = cwd.split('/').filter(Boolean)
+  const shortCwd = parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : cwd
+
   return (
     <Box width={width}>
       <Text bold color={statusColor}>
@@ -47,19 +53,19 @@ export default function StatusBar({ modelId, cwd, width, ready, busy, step }) {
       <Text color={MUTED}>│ </Text>
       <Text color={TAGLINE}>{shortModel}</Text>
       <Text color={MUTED}> │ </Text>
-      {step && busy ? (
+      {busy ? (
         <Text color={PINK} italic>
-          {step}
+          {stepMsg || step || 'pipeline running'}
         </Text>
       ) : (
-        <Text color={MUTED}>{busy ? 'pipeline running' : 'idle'}</Text>
+        <Text color={MUTED}>idle</Text>
       )}
       <Text color={MUTED}> │ </Text>
       <Text color={ACCENT}>~</Text>
-      <Text color={MUTED}> {cwd}</Text>
+      <Text color={MUTED}> {shortCwd}</Text>
       <Text> </Text>
       <Text color={MUTED} dim>
-        [Tab: sections · Ctrl+C: cancel · Ctrl+G: log]
+        [Tab·Ctrl+C·Ctrl+G]
       </Text>
     </Box>
   )

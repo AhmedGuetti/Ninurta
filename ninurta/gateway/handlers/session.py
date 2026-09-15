@@ -2,79 +2,27 @@
 
 import logging
 import threading
+import time
 from typing import Any
-from pathlib import Path
-import json
 
 from ninurta.config import load_config
-from ninurta.db.session import SessionLocal, init_db
-from ninurta.db.models import Job, Resume
+from ninurta.interface.resume_loader import load_resume_from_db, load_resume_from_disk
 from ninurta.graph import extract_graph, match_graph
 from ninurta.gateway.utils import _format_cost_table
 
 logger = logging.getLogger(__name__)
 
-# Disk resume paths (fallback when DB is empty)
-_RESUME_DIR = Path(__file__).resolve().parent.parent.parent.parent / "resume"
-_RESUME_FILES = [
-    _RESUME_DIR / "resume_en.docx",
-    _RESUME_DIR / "resume_fr.docx",
-]
 
 # ---------------------------------------------------------------------------
-# Resume loading (DB → disk fallback)
+# Resume loading (DB → disk fallback — shared with the CLI via resume_loader)
 # ---------------------------------------------------------------------------
-
-def _load_resume_from_db() -> tuple[dict | None, str | None]:
-    """Return the first resume record from the DB: (parsed_json, raw_content)."""
-    init_db()
-    session = SessionLocal()
-    try:
-        resume = session.query(Resume).order_by(Resume.id.desc()).first()
-        if not resume:
-            return None, None
-        parsed = None
-        if resume.parsed_json:  # type: ignore[truthy-function]
-            try:
-                parsed = json.loads(resume.parsed_json)  # type: ignore[arg-type]
-            except json.JSONDecodeError:
-                logger.warning("resume %d has invalid parsed_json", resume.id)
-        return parsed, resume.content  # type: ignore[return-value]
-    finally:
-        session.close()
-
-
-def _load_resume_from_disk() -> tuple[dict | None, str | None]:
-    """Parse the first available .docx resume from disk.
-
-    Returns (parsed_dict, raw_text) using the resume_reader_node's parser,
-    without going through the full resume graph (no LLM validation needed
-    for matching — the raw parse is sufficient).
-    """
-    from ninurta.interface.documents import extract_text
-    from ninurta.nodes.resume_reader import parse_resume
-
-    for path in _RESUME_FILES:
-        if path.exists():
-            try:
-                text = extract_text(path)
-                if not text.strip():
-                    continue
-                parsed = parse_resume(text)
-                logger.info("loaded resume from disk: %s", path.name)
-                return parsed, text
-            except Exception as exc:
-                logger.warning("failed to read %s: %s", path.name, exc)
-                continue
-    return None, None
-
 
 def _get_resume(transport) -> tuple[dict | None, str | None]:
     """Load resume data: DB first, then disk fallback."""
     transport.send_event("pipeline.progress", {"step": "loading_resume"})
     transport.send_event("turn.delta", {"text": "▸ looking up resume…\n"})
 
-    parsed, raw = _load_resume_from_db()
+    parsed, raw = load_resume_from_db()
     if parsed or raw:
         name = (parsed or {}).get("name", "unknown")
         sections_n = len((parsed or {}).get("sections", {}))
@@ -83,11 +31,12 @@ def _get_resume(transport) -> tuple[dict | None, str | None]:
             {"text": f"  ✓ using resume from DB: {name} ({sections_n} sections) — /db resume 1 to inspect\n"}
         )
         # Also check if a disk copy exists and is newer
-        from ninurta.interface.documents import extract_text
+        from ninurta.interface.resume_loader import RESUME_FILES
         disk_text = None
-        for path in _RESUME_FILES:
+        for path in RESUME_FILES:
             if path.exists():
                 try:
+                    from ninurta.interface.documents import extract_text
                     disk_text = extract_text(path)
                     break
                 except Exception:
@@ -102,10 +51,18 @@ def _get_resume(transport) -> tuple[dict | None, str | None]:
     transport.send_event(
         "turn.delta", {"text": "  · no resume in DB, parsing from disk…\n"}
     )
-    parsed, raw = _load_resume_from_disk()
+    parsed, raw = load_resume_from_disk()
     if parsed or raw:
         name = (parsed or {}).get("name", "unknown")
         sections_n = len((parsed or {}).get("sections", {}))
+        # Persist the disk parse so match reports can link a real resume row.
+        if parsed is not None:
+            try:
+                from ninurta.db.operations import save_resume
+
+                save_resume(parsed, raw or "")
+            except Exception as exc:  # noqa: BLE001 — persistence must not block scoring
+                logger.warning("could not persist resume from disk: %s", exc)
         transport.send_event(
             "turn.delta", {"text": f"  ✓ parsed resume from disk: {name} ({sections_n} sections, {len(raw or '')} chars)\n"}
         )
@@ -178,7 +135,7 @@ def handle_session_send(params: dict, transport) -> dict:
 
     transport.send_event(
         "pipeline.progress",
-        {"step": "extractor"},
+        {"step": "extractor", "message": "extracting job description…"},
     )
     transport.send_event(
         "turn.delta",
@@ -186,7 +143,36 @@ def handle_session_send(params: dict, transport) -> dict:
     )
 
     state: dict[str, Any] = {"jd_text": jd_text}
-    result = extract_graph.invoke(state)  # type: ignore[arg-type]
+    # Register the LLM-status sink so the TUI's status line shows live
+    # "reasoning…" messages while the extractor calls the model.
+    from ninurta.nodes._llm_helpers import set_llm_status_sink
+
+    set_llm_status_sink(
+        lambda msg: transport.send_event("pipeline.progress", {"step": "llm", "message": msg})
+    )
+    try:
+        result = {}
+        for event in extract_graph.stream(state):
+            for node_name, state_update in event.items():
+                if node_name == "extractor":
+                    transport.send_event("turn.delta", {"text": "  ⚡ extracted constraints... checking DB for duplicates...\n"})
+                elif node_name == "job_dedup":
+                    transport.send_event("turn.delta", {"text": "  ✓ extraction complete.\n"})
+                
+                # Check for dedup embedded within updates
+                dedup = state_update.get("dedup_result")
+                if dedup:
+                    verdict = dedup.get("verdict")
+                    if verdict == "duplicate":
+                        transport.send_event("turn.delta", {"text": "  [✓] found similar (duplicate)\n"})
+                    elif verdict == "similar":
+                        transport.send_event("turn.delta", {"text": "  [⚠] found similar\n"})
+                    else:
+                        transport.send_event("turn.delta", {"text": "  [✓] new listing\n"})
+
+                result.update(state_update)
+    finally:
+        set_llm_status_sink(None)
 
     if _pipeline_cancel.is_set():
         return {"status": "cancelled"}
@@ -219,30 +205,44 @@ def handle_session_send(params: dict, transport) -> dict:
         {"text": f"  ✓ extracted: {job_summary} ({field_count} fields, {skills_n} skills, {resp_n} responsibilities)\n"},
     )
 
-    # ── JD dedup: check if this listing already exists in DB ──────────
-    init_db()
-    session = SessionLocal()
-    try:
-        existing = (
-            session.query(Job)
-            .filter(
-                Job.company_name.collate("NOCASE") == (parsed_job.company_name or "").strip(),  # type: ignore[union-attr]
-                Job.position_title.collate("NOCASE") == (parsed_job.position_title or "").strip(),  # type: ignore[union-attr]
-            )
-            .first()
+    # ── JD dedup: heuristic similarity against stored jobs ──────────────
+    # The extract graph now runs job_dedup_node after the extractor; its
+    # verdict (duplicate/similar/new + top matches) lands in dedup_result.
+    dedup = result.get("dedup_result") or {}
+    verdict = dedup.get("verdict", "new")
+    matches = dedup.get("matches") or []
+
+    if verdict == "duplicate" and matches:
+        m = matches[0]
+        tag = "✓applied" if m.get("already_applied") else "seen before"
+        transport.send_event(
+            "turn.delta",
+            {"text": f"  ⚡ already in DB (id={m['id']}, {m['score']:.0%} match, {tag})\n"},
         )
-        if existing:
-            tag = "✓applied" if existing.already_applied else "seen before"  # type: ignore[union-attr]
-            transport.send_event(
-                "turn.delta",
-                {"text": f"  ⚡ already in DB (id={existing.id}, {tag})\n"}
-            )
-        else:
-            transport.send_event(
-                "turn.delta", {"text": "  · new listing (not in DB)\n"}
-            )
-    finally:
-        session.close()
+        if len(matches) > 1:
+            others = ", ".join(f"id={x['id']} ({x['score']:.0%})" for x in matches[1:])
+            transport.send_event("turn.delta", {"text": f"    └ similar too: {others}\n"})
+    elif verdict == "similar" and matches:
+        m = matches[0]
+        transport.send_event(
+            "turn.delta",
+            {"text": f"  ⚠ similar listing (id={m['id']}, {m['score']:.0%} match) — check before applying\n"},
+        )
+    else:
+        transport.send_event("turn.delta", {"text": "  · new listing (not in DB)\n"})
+
+    # ── Persist the JP in the DB ─────────────────────────────────────────
+    # Re-extraction of a known listing does NOT mark it applied — that flag
+    # is reserved for actual applications (mark_applied=False).
+    from ninurta.db.operations import save_job
+
+    job_save = save_job(parsed_job, jd_text, mark_applied=False)
+    if job_save["status"] == "created":
+        transport.send_event(
+            "turn.delta",
+            {"text": f"  💾 job saved to DB (id={job_save['job_id']})\n"},
+        )
+    # status 'exists' — already persisted, nothing to do.
 
     # ── Phase 2: Load resume ──────────────────────────────────────────
     parsed_resume, resume_text = _get_resume(transport)
@@ -259,7 +259,7 @@ def handle_session_send(params: dict, transport) -> dict:
     if _pipeline_cancel.is_set():
         return {"status": "cancelled"}
 
-    transport.send_event("pipeline.progress", {"step": "matcher"})
+    transport.send_event("pipeline.progress", {"step": "matcher", "message": "scoring resume vs JD…"})
 
     name = (parsed_resume or {}).get("name", "resume")
     transport.send_event(
@@ -273,7 +273,19 @@ def handle_session_send(params: dict, transport) -> dict:
         "parsed_resume": parsed_resume,
         "resume_text": resume_text,
     }
-    match_result = match_graph.invoke(match_state)  # type: ignore[arg-type]
+    set_llm_status_sink(
+        lambda msg: transport.send_event("pipeline.progress", {"step": "llm", "message": msg})
+    )
+    try:
+        match_result = {}
+        transport.send_event("turn.delta", {"text": "\n  🧠 starting analysis of score...\n"})
+        for event in match_graph.stream(match_state):
+            for node_name, state_update in event.items():
+                if node_name == "matcher":
+                    transport.send_event("turn.delta", {"text": "  ✓ analysis complete\n"})
+                match_result.update(state_update)
+    finally:
+        set_llm_status_sink(None)
 
     if _pipeline_cancel.is_set():
         return {"status": "cancelled"}
@@ -291,53 +303,72 @@ def handle_session_send(params: dict, transport) -> dict:
         overall = match_data.get("overall_score", 0)
         skills = match_data.get("skills_score", 0)
         exp = match_data.get("experience_score", 0)
-        summary = match_data.get("summary", "")
+        edu = match_data.get("education_score", 0)
+        resp = match_data.get("responsibilities_score", 0)
+        
+        overall_pct = int(overall * 100)
 
-        score_str = (
-            f"overall: {overall:.0%} | "
-            f"skills: {skills:.0%} | "
-            f"experience: {exp:.0%}"
-        )
+        # NOTE: no ANSI SGR codes here. The TUI renders this via Ink's <Text>,
+        # which does NOT interpret raw escape sequences — they corrupt the
+        # string-width math and make lines overlap/mangle (compounding every
+        # turn). Emoji + markdown markers carry the hierarchy instead.
+        md_lines = [
+            f"## 🎯 Match Analysis: {overall_pct}%",
+            "",
+            "### 📊 Breakdown",
+            f"- Skills: {int(skills * 100)}%",
+            f"- Experience: {int(exp * 100)}%"
+        ]
 
-        transport.send_event("turn.delta", {"text": f"\n📊 {score_str}\n"})
+        if edu is not None:
+            md_lines.append(f"- Education: {int(edu * 100)}%")
+        if resp is not None:
+            md_lines.append(f"- Responsibilities: {int(resp * 100)}%")
 
+        summary = match_data.get("summary")
         if summary:
-            transport.send_event("turn.delta", {"text": f"\n{summary}\n"})
+            md_lines.extend(["", "### 📋 Summary", summary])
 
-        # Strengths & gaps
-        strengths = match_data.get("strengths", [])
-        gaps = match_data.get("gaps", [])
-        actions = match_data.get("action_items", [])
-
+        strengths = match_data.get("strengths") or []
         if strengths:
-            transport.send_event("turn.delta", {"text": "\n✅ Strengths:\n"})
+            md_lines.extend(["", "### ✅ Strengths"])
             for s in strengths[:5]:
-                transport.send_event("turn.delta", {"text": f"  • {s}\n"})
+                md_lines.append(f"- {s}")
 
+        gaps = match_data.get("gaps") or []
         if gaps:
-            transport.send_event("turn.delta", {"text": "\n⚠ Gaps:\n"})
+            md_lines.extend(["", "### ⚠ Gaps"])
             for g in gaps[:5]:
-                transport.send_event("turn.delta", {"text": f"  • {g}\n"})
+                md_lines.append(f"- {g}")
 
-        if actions:
-            transport.send_event("turn.delta", {"text": "\n🔧 Action items:\n"})
-            for a in actions[:5]:
-                transport.send_event("turn.delta", {"text": f"  • {a}\n"})
+        action_items = match_data.get("action_items") or []
+        if action_items:
+            md_lines.extend(["", "### 🔧 Action Items"])
+            for a in action_items[:5]:
+                md_lines.append(f"- {a}")
 
-        # Keyword match summary
-        kw = match_data.get("keyword_match", {})
-        matched = kw.get("matched", [])
-        missing = kw.get("missing", [])
-        if matched:
+        # Stream the report ONE LINE at a time (with a tiny inter-line delay).
+        # Sending the whole multi-line report as a single turn.delta makes the
+        # frontend append ~30 lines in one React update, which the inline diff
+        # renderer can't lay out correctly — rows end up overlapping/mangled.
+        # Small deltas let each line render incrementally (same as the progress
+        # messages above, which arrive one-by-one).
+        transport.send_event("turn.delta", {"text": "\n"})
+        for line in md_lines:
+            transport.send_event("turn.delta", {"text": f"{line}\n"})
+            time.sleep(0.005)
+
+        # ── Persist the structured report (job × resume × score) ────────
+        from ninurta.db.operations import save_match_report
+
+        try:
+            report_save = save_match_report(job_save["job_id"], match_data)
             transport.send_event(
                 "turn.delta",
-                {"text": f"\n🔑 Matched keywords ({len(matched)}): {', '.join(matched[:10])}\n"},
+                {"text": f"\n💾 report saved (id={report_save['report_id']}) — /db report {report_save['report_id']}\n"},
             )
-        if missing:
-            transport.send_event(
-                "turn.delta",
-                {"text": f"❌ Missing keywords ({len(missing)}): {', '.join(missing[:10])}\n"},
-            )
+        except Exception as exc:  # noqa: BLE001 — persistence must not kill the turn
+            logger.warning("failed to save match report: %s", exc)
 
         transport.send_event(
             "pipeline.progress", {"step": "completed"}

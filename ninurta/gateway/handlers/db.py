@@ -2,15 +2,17 @@
 
 import json
 from ninurta.db.session import SessionLocal, init_db
-from ninurta.db.models import Job, Resume
+from ninurta.db.models import Job, MatchReport, Resume
 
 def _db_summary(session) -> str:
     """Return a compact summary of all tables."""
     resumes = session.query(Resume).all()
     jobs = session.query(Job).all()
+    reports = session.query(MatchReport).all()
     lines = [
         f"resumes: {len(resumes)}",
         f"jobs: {len(jobs)}",
+        f"reports: {len(reports)}",
     ]
     if resumes:
         lines.append("─ resumes ─")
@@ -22,6 +24,13 @@ def _db_summary(session) -> str:
             lines.append(
                 f"  [{j.id}] {j.position_title} @ {j.company_name}"
                 f"{' ✓applied' if j.already_applied else ''}"
+            )
+    if reports:
+        lines.append("─ reports ─")
+        for rep in reports[:5]:
+            pct = f"{rep.overall_score:.0%}"
+            lines.append(
+                f"  [{rep.id}] job #{rep.job_id} × resume #{rep.resume_id or '—'} → {pct}"
             )
     return "\n".join(lines)
 
@@ -293,7 +302,84 @@ def _db_row(session, table: str, row_id: int) -> str:
         lines.append(f"raw JD: {len(row.raw_job_description or '')} chars")
         return "\n".join(lines)
 
-    return f"unknown table '{table}' — try 'resumes' or 'jobs'"
+    if table in ("reports", "report"):
+        row = session.query(MatchReport).filter(MatchReport.id == row_id).first()
+        if not row:
+            return f"report id={row_id} not found"
+        created = row.created_at.strftime("%Y-%m-%d %H:%M") if row.created_at else "?"
+        job = session.query(Job).filter(Job.id == row.job_id).first()
+        resume = session.query(Resume).filter(Resume.id == row.resume_id).first() if row.resume_id is not None else None
+
+        job_label = f"{job.position_title} @ {job.company_name}" if job else f"#{row.job_id}"
+        resume_label = resume.name if resume else (f"#{row.resume_id}" if row.resume_id is not None else "—")
+
+        lines = [
+            f"Report #{row.id}: {job_label}",
+            f"job #{row.job_id} × resume #{row.resume_id or '—'} ({resume_label})",
+            f"created: {created}",
+            "",
+            "  ── Score " + "─" * 32,
+            f"  {'overall':22s} {row.overall_score:.0%}",
+            f"  {'skills':22s} {row.skills_score:.0%}",
+            f"  {'experience':22s} {row.experience_score:.0%}",
+            f"  {'education':22s} {row.education_score:.0%}",
+            f"  {'responsibilities':22s} {row.responsibilities_score:.0%}",
+        ]
+
+        def _load(field: str):
+            raw = getattr(row, field, None)
+            if not raw:
+                return None
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+
+        if row.summary:
+            lines.append("")
+            lines.append("  ── Summary " + "─" * 31)
+            lines.append(f"  {row.summary}")
+
+        kw = _load("keyword_match")
+        if kw:
+            matched = kw.get("matched") or []
+            missing = kw.get("missing") or []
+            if matched:
+                lines.append("")
+                lines.append("  ── Keywords matched " + "─" * 24)
+                for k in matched[:15]:
+                    lines.append(f"  • {k}")
+            if missing:
+                lines.append("")
+                lines.append("  ── Keywords missing " + "─" * 24)
+                for k in missing[:15]:
+                    lines.append(f"  • {k}")
+
+        strengths = _load("strengths")
+        if strengths:
+            lines.append("")
+            lines.append("  ── Strengths " + "─" * 30)
+            for s in strengths[:8]:
+                lines.append(f"  • {s}")
+
+        gaps = _load("gaps")
+        if gaps:
+            lines.append("")
+            lines.append("  ── Gaps " + "─" * 35)
+            for g in gaps[:8]:
+                lines.append(f"  • {g}")
+
+        actions = _load("action_items")
+        if actions:
+            lines.append("")
+            lines.append("  ── Action items " + "─" * 27)
+            for a in actions[:8]:
+                lines.append(f"  • {a}")
+
+        lines.append("")
+        return "\n".join(lines)
+
+    return f"unknown table '{table}' — try 'resumes', 'jobs', or 'reports'"
 
 
 def handle_db_inspect(params: dict, transport) -> dict:
@@ -331,8 +417,23 @@ def handle_db_inspect(params: dict, transport) -> dict:
                         f"{' ✓' if j.already_applied else ''}"
                         for j in rows
                     )
+            elif table in ("reports", "report"):
+                rows = session.query(MatchReport).order_by(MatchReport.id.desc()).all()
+                if not rows:
+                    text = "no reports in db"
+                else:
+                    lines = []
+                    for rep in rows:
+                        job = session.query(Job).filter(Job.id == rep.job_id).first()
+                        resume = session.query(Resume).filter(Resume.id == rep.resume_id).first() if rep.resume_id is not None else None
+                        job_label = f"{job.position_title} @ {job.company_name}" if job else f"#{rep.job_id}"
+                        resume_label = resume.name if resume else (f"#{rep.resume_id}" if rep.resume_id is not None else "—")
+                        lines.append(
+                            f"[{rep.id}] {rep.overall_score:.0%} — {job_label} × {resume_label}"
+                        )
+                    text = "\n".join(lines)
             else:
-                text = f"unknown table '{table}' — try 'resumes' or 'jobs'"
+                text = f"unknown table '{table}' — try 'resumes', 'jobs', or 'reports'"
     finally:
         session.close()
 

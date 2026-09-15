@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { GatewayClient } from '../gateway/gatewayClient.js'
-import { addMessage, clearTurn, endTurn, setStep, setBusy, appendStream, getTurnState, $modelId } from './turnStore.js'
+import { addMessage, clearTurn, endTurn, setStep, setBusy, appendStream, getTurnState, $modelId, activateSelector, clearSelector } from './turnStore.js'
 
 export interface MainAppApi {
   gateway: GatewayClient
@@ -33,14 +33,9 @@ export function useMainApp(): MainAppApi {
     gw.on('turn.end', (params: { text?: string; error?: string }) => {
       endTurn(params?.text, params?.error)
     })
-    gw.on('pipeline.progress', (params: { step: string }) => {
-      setStep(params?.step ?? 'working…')
+    gw.on('pipeline.progress', (params: { step: string; message?: string }) => {
+      setStep(params?.step ?? 'working…', params?.message ?? '')
     })
-    gw.on('tool.start', (params: { name: string }) => {
-      setStep(`⚙ ${params?.name ?? 'tool'}`)
-    })
-    gw.on('tool.end', () => setStep(''))
-
     // Re-render the stderr log pane when new lines arrive (ring buffer).
     gw.on('log', () => force((v) => v + 1))
 
@@ -79,26 +74,102 @@ export function useMainApp(): MainAppApi {
         clearTurn()
         return
       case 'model': {
-        // /model                → show current model
-        // /model <model-id>     → switch model (e.g. /model gemini-3.6-flash)
-        // /model <provider:name> → switch provider + model
-        const modelId = args[0]
-        if (!modelId) {
-          setStep('reading model…')
-          try {
-            const res = (await gw.request('model.get', {})) as { full?: string }
-            endTurn(res?.full ?? 'unknown model')
-          } catch (e) {
-            endTurn(undefined, e instanceof Error ? e.message : String(e))
-          }
-          return
-        }
-        setStep('switching model…')
+        // Interactive selector flow:
+        //   1. /model → show providers, arrow-key pick
+        //   2. pick provider → show its models, arrow-key pick
+        //   3. pick model → switch, done
+        const gw = gwRef.current
+        if (!gw) return
+
+        // Fetch the full provider→models map once
+        setStep('reading models…')
         try {
-          const res = (await gw.request('model.set', { model_id: modelId })) as { model?: string; status?: string }
-          const newModel = res?.model ?? modelId
-          $modelId.set(newModel)  // update status bar + info box reactively
-          endTurn(`model switched to ${newModel}`)
+          const list = (await gw.request('model.list', {})) as {
+            providers?: Record<string, string[]>
+            current_provider?: string
+            current_model?: string
+          }
+          const providers = list?.providers ?? {}
+          const curP = list?.current_provider ?? ''
+          const curM = list?.current_model ?? ''
+          const entries = Object.entries(providers)
+          if (entries.length === 0) {
+            endTurn('no providers configured — add llm.providers to config.yaml')
+            return
+          }
+
+          // ── Step 1: pick a provider ──────────────────────────────────
+          activateSelector(
+            'Pick a provider',
+            entries.map(([prov]) => ({
+              id: prov,
+              label: prov,
+              current: prov === curP,
+            })),
+            // onSelect: user chose a provider → list its models
+            (provId: string) => {
+              const models = providers[provId] ?? []
+              activateSelector(
+                `${provId} models`,
+                models.map((m) => ({
+                  id: m,
+                  label: m,
+                  current: provId === curP && m === curM,
+                })),
+                // onSelect: user chose a model → switch
+                async (modelId: string) => {
+                  clearSelector()
+                  setStep('switching model…')
+                  try {
+                    const res = (await gw.request('model.set', { provider: provId, model: modelId })) as { model?: string }
+                    const newModel = res?.model ?? `${provId}:${modelId}`
+                    $modelId.set(newModel)
+                    endTurn(`switched to ${newModel}`)
+                  } catch (e) {
+                    endTurn(undefined, e instanceof Error ? e.message : String(e))
+                  }
+                },
+                // onCancel: back to provider selection
+                () => {
+                  activateSelector(
+                    'Pick a provider',
+                    entries.map(([prov]) => ({
+                      id: prov,
+                      label: prov,
+                      current: prov === curP,
+                    })),
+                    (provId2: string) => {
+                      const models2 = providers[provId2] ?? []
+                      activateSelector(
+                        `${provId2} models`,
+                        models2.map((m) => ({
+                          id: m,
+                          label: m,
+                          current: provId2 === curP && m === curM,
+                        })),
+                        async (modelId2: string) => {
+                          clearSelector()
+                          setStep('switching model…')
+                          try {
+                            const res2 = (await gw.request('model.set', { provider: provId2, model: modelId2 })) as { model?: string }
+                            const newModel2 = res2?.model ?? `${provId2}:${modelId2}`
+                            $modelId.set(newModel2)
+                            endTurn(`switched to ${newModel2}`)
+                          } catch (e2) {
+                            endTurn(undefined, e2 instanceof Error ? e2.message : String(e2))
+                          }
+                        },
+                        clearSelector,
+                      )
+                    },
+                    clearSelector,
+                  )
+                },
+              )
+            },
+            // onCancel: dismiss
+            clearSelector,
+          )
         } catch (e) {
           endTurn(undefined, e instanceof Error ? e.message : String(e))
         }
@@ -106,10 +177,8 @@ export function useMainApp(): MainAppApi {
       }
       case 'db': {
         // /db                  → summary of all tables
-        // /db resumes          → list resumes
-        // /db jobs             → list jobs
-        // /db resume <id>      → detail for resume row
-        // /db job <id>         → detail for job row
+        // /db resumes|jobs|reports → list rows
+        // /db resume|job|report <id> → detail for a row
         const sub = args[0]
         if (!sub) {
           setStep('reading db…')
@@ -122,7 +191,7 @@ export function useMainApp(): MainAppApi {
           return
         }
         const idArg = args[1]
-        if (sub === 'resumes' || sub === 'jobs') {
+        if (['resumes', 'jobs', 'reports'].includes(sub)) {
           setStep(`listing ${sub}…`)
           try {
             const res = (await gw.request('db.inspect', { table: sub })) as { text?: string }
@@ -132,7 +201,7 @@ export function useMainApp(): MainAppApi {
           }
           return
         }
-        if ((sub === 'resume' || sub === 'job') && idArg) {
+        if (['resume', 'job', 'report'].includes(sub) && idArg) {
           setStep(`fetching ${sub} ${idArg}…`)
           try {
             const res = (await gw.request('db.inspect', { table: sub, id: parseInt(idArg, 10) })) as { text?: string }
@@ -142,7 +211,7 @@ export function useMainApp(): MainAppApi {
           }
           return
         }
-        addMessage({ role: 'system', text: 'usage: /db | /db resumes|jobs | /db resume|job <id>' })
+        addMessage({ role: 'system', text: 'usage: /db | /db resumes|jobs|reports | /db resume|job|report <id>' })
         return
       }
       default:

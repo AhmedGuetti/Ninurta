@@ -13,6 +13,8 @@ class State(TypedDict):
     jd_text: str
     parsed_job: JobDescription | None
     test_tool_result: str | None
+    # Heuristic dedup verdict from job_dedup_node (against stored jobs).
+    dedup_result: dict | None
 
     # ── Resume graph ─────────────────────────────────────────────────────
     resume_text: str
