@@ -20,6 +20,7 @@ from langgraph.graph import StateGraph, START, END
 
 from ninurta.state import State
 from ninurta.nodes.extractor import extractor_node
+from ninurta.nodes.job_dedup import job_dedup_node
 from ninurta.nodes.resume_reader import resume_reader_node
 from ninurta.nodes.resume_validator import resume_validator_node
 from ninurta.nodes.resume_reviewer import resume_reviewer_node
@@ -32,8 +33,10 @@ from ninurta.nodes.matcher import matcher_node
 # ---------------------------------------------------------------------------
 extract_builder = StateGraph(State)
 extract_builder.add_node("extractor", extractor_node)
+extract_builder.add_node("job_dedup", job_dedup_node)
 extract_builder.add_edge(START, "extractor")
-extract_builder.add_edge("extractor", END)
+extract_builder.add_edge("extractor", "job_dedup")
+extract_builder.add_edge("job_dedup", END)
 extract_graph = extract_builder.compile()
 
 # Backward-compatible alias for code that imports `graph`
@@ -70,3 +73,17 @@ match_builder.add_edge("extractor", "matcher")
 match_builder.add_edge("matcher", END)
 
 match_graph = match_builder.compile()
+
+
+# ---------------------------------------------------------------------------
+# Score graph — matcher only (takes an already-parsed job + resume).
+# Used by the CLI `pipeline match` / `pipeline full` stages so the JD is
+# extracted exactly once (the TUI runs extract_graph, then this).
+# ---------------------------------------------------------------------------
+score_builder = StateGraph(State)
+score_builder.add_node("matcher", matcher_node)
+
+score_builder.add_edge(START, "matcher")
+score_builder.add_edge("matcher", END)
+
+score_graph = score_builder.compile()

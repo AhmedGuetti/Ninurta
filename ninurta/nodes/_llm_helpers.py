@@ -10,11 +10,34 @@ from __future__ import annotations
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from typing import Callable
 
 from ninurta.llm.base import LLMResult
 from ninurta.utils.logger import get_logger
 
 log = get_logger(__name__)
+
+# ── Optional live-status sink ─────────────────────────────────────────────
+# The gateway registers a callback here so the TUI can show what the LLM is
+# doing ("reasoning…") while a node runs.  Nodes stay transport-agnostic:
+# without a registered sink these calls are no-ops.
+_status_sink: Callable[[str], None] | None = None
+
+
+def set_llm_status_sink(sink: Callable[[str], None] | None) -> None:
+    """Register (or clear, with ``None``) the live LLM-status callback."""
+    global _status_sink
+    _status_sink = sink
+
+
+def _emit_llm_status(message: str) -> None:
+    """Push a status line to the registered sink, if any (never raises)."""
+    if _status_sink is not None:
+        try:
+            _status_sink(message)
+        except Exception:  # noqa: BLE001 — status must never break the LLM call
+            pass
+
 
 # ── LLM call with timeout ────────────────────────────────────────────────
 
@@ -23,11 +46,15 @@ def _call_llm(llm, messages: list[dict], max_tokens: int = 8192, timeout: int = 
     """Call ``llm.complete()`` with a thread-pool timeout.
 
     Without this wrapper a hung API call freezes the TUI indefinitely.
+    Emits live status ("reasoning…" / "response received") when a sink is set.
     """
+    _emit_llm_status(f"{llm.model_id} · reasoning…")
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(llm.complete, messages, max_tokens=max_tokens, thinking=False)
         try:
-            return future.result(timeout=timeout)
+            result = future.result(timeout=timeout)
+            _emit_llm_status(f"{llm.model_id} · response received")
+            return result
         except FuturesTimeoutError:
             raise TimeoutError(
                 f"LLM call to {llm.model_id} timed out after {timeout}s — "
